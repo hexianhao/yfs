@@ -8,8 +8,11 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-extent_server::extent_server() {}
-
+extent_server::extent_server() {
+  int ret;
+  // 创建根目录
+  put(1, "", ret);
+}
 
 int extent_server::put(extent_protocol::extentid_t id, std::string buf, int &)
 {
