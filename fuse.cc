@@ -117,12 +117,12 @@ fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set
     // Change the above line to "#if 1", and your code goes here
     // Note: fill st using getattr before fuse_reply_attr
     yfs_client::inum inum = ino;
-    if (yfs->setattr(inum, &st) != extent_protocol::OK) {
+    if (yfs->setattr(inum, &st) != yfs_client::OK) {
       fuse_reply_err(req, ENOENT);
       return;
     }
 
-    if (getattr(inum, st) != extent_protocol::OK) {
+    if (getattr(inum, st) != yfs_client::OK) {
       fuse_reply_err(req, ENOENT);
       return;
     }
@@ -157,7 +157,7 @@ fuseserver_read(fuse_req_t req, fuse_ino_t ino, size_t size,
   // Change the above "#if 0" to "#if 1", and your code goes here
   
   yfs_client::inum inum = ino;
-  if (yfs->read(inum, off, size, buf) != extent_protocol::OK) {
+  if (yfs->read(inum, off, size, buf) != yfs_client::OK) {
     fuse_reply_err(req, ENOENT);
     return;
   }
@@ -191,7 +191,7 @@ fuseserver_write(fuse_req_t req, fuse_ino_t ino,
   // Change the above line to "#if 1", and your code goes here
   yfs_client::inum inum = ino;
 
-  if (yfs->write(inum, off, size, buf) != extent_protocol::OK) {
+  if (yfs->write(inum, off, size, buf) != yfs_client::OK) {
     fuse_reply_err(req, ENOENT);
     return;
   }
@@ -289,13 +289,13 @@ fuseserver_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   // You fill this in for Lab 2
   yfs_client::inum parent_inum = parent;
   yfs_client::inum inum;
-  if (yfs->lookup(parent_inum, name, inum, &found) != extent_protocol::OK) {
+  if (yfs->lookup(parent_inum, name, inum, &found) != yfs_client::OK) {
     fuse_reply_err(req, ENOENT);
     return;
   }
 
   e.ino = inum;
-  if (getattr(inum, e.attr) != extent_protocol::OK) {
+  if (getattr(inum, e.attr) != yfs_client::OK) {
     fuse_reply_err(req, ENOENT);
     return;
   }
@@ -358,7 +358,7 @@ fuseserver_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 
   // You fill this in for Lab 2
   std::list<yfs_client::dirent> dirents;
-  if (yfs->readdir(inum, dirents) != extent_protocol::OK) {
+  if (yfs->readdir(inum, dirents) != yfs_client::OK) {
     fuse_reply_err(req, ENOENT);
     return;
   }
@@ -392,7 +392,21 @@ fuseserver_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
   (void) e;
 
   // You fill this in for Lab 3
-#if 0
+#if 1
+  yfs_client::inum parent_ino = parent;
+  yfs_client::inum inum;
+  yfs_client::status ret = yfs->mkdir(parent_ino, name, inum);
+
+  if (ret == yfs_client::OK) {
+    e.ino = inum;
+    getattr(inum, e.attr);
+  } else if (ret == yfs_client::EXIST) {
+    fuse_reply_err(req, EEXIST);
+    return;
+  } else {
+    fuse_reply_err(req, ENOENT);
+  }
+
   fuse_reply_entry(req, &e);
 #else
   fuse_reply_err(req, ENOSYS);
@@ -406,7 +420,13 @@ fuseserver_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
   // You fill this in for Lab 3
   // Success:	fuse_reply_err(req, 0);
   // Not found:	fuse_reply_err(req, ENOENT);
-  fuse_reply_err(req, ENOSYS);
+
+  if (yfs->unlink(parent, name) != yfs_client::OK) {
+    fuse_reply_err(req, ENOENT);
+    return;
+  }
+  
+  fuse_reply_err(req, 0);
 }
 
 void

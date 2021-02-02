@@ -13,7 +13,7 @@
 yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
 {
   ec = new extent_client(extent_dst);
-
+  lc = new lock_client(lock_dst);
 }
 
 yfs_client::inum
@@ -97,6 +97,9 @@ yfs_client::inum yfs_client::random_inum(bool isfile) {
 }
 
 int yfs_client::create(inum parent, const char* name, inum& inum) {
+  // add lock
+  LockGuard lg(lc, parent);
+
   std::string data;
   std::string filename;
   // 先判断父目录
@@ -143,6 +146,9 @@ int yfs_client::read(inum inum, int off, int size, std::string& buf) {
 }
 
 int yfs_client::write(inum inum, int off, int size, const char* buf) {
+  // add lock
+  LockGuard lg(lc, inum);
+
   std::string data;
   if (ec->get(inum, data) != extent_protocol::OK) {
     return IOERR;
@@ -187,7 +193,76 @@ int yfs_client::lookup(inum parent, const char* name, inum& inum, bool* found) {
   }
 }
 
+int yfs_client::mkdir(inum parent, const char* name, inum& inum) {
+  // add lock
+  LockGuard lg(lc, parent);
+
+  std::string data;
+  if (ec->get(parent, data) != extent_protocol::OK) {
+    return IOERR;
+  }
+
+  std::string dirname = "/" + std::string(name) + "/";
+  size_t pos = data.find(dirname);
+  if (pos != std::string::npos) {
+    return EXIST;
+  }
+
+  inum = random_inum(false);
+  if (ec->put(inum, std::string()) != extent_protocol::OK) {
+    return IOERR;
+  }
+
+  data.append(dirname + filename(inum) + "/");
+  if (ec->put(inum, data) != extent_protocol::OK) {
+    return IOERR;
+  }
+
+  return OK;
+}
+
+int yfs_client::unlink(inum parent, const char* name) {
+  // add lock
+  LockGuard lg(lc, parent);
+
+  std::string data;
+  if (ec->get(parent, data) != extent_protocol::OK) {
+    return IOERR;
+  }
+
+  std::string filename = "/" + std::string(name) + "/";
+  size_t pos = data.find(filename);
+  if (pos == std::string::npos) {
+    return NOENT;
+  }
+
+  size_t end = data.find_first_of('/', pos + filename.length());
+  if (end == std::string::npos) {
+    return NOENT;
+  }
+
+  size_t len = end - pos - filename.length();
+  inum ino = n2i(data.substr(pos + filename.length(), len));
+  if (!isfile(ino)) {
+    return IOERR;
+  }
+
+  data.erase(pos, end - pos + 1);
+  if (ec->put(parent, data) != extent_protocol::OK) {
+    return IOERR;
+  }
+
+  if (ec->remove(ino) != extent_protocol::OK) {
+    return IOERR;
+  }
+
+  return OK;
+}
+
 int yfs_client::setattr(inum inum, struct stat* attr) {
+  // add lock
+  LockGuard lg(lc, inum);
+
   size_t size = attr->st_size;
   std::string buf;
   
@@ -232,4 +307,3 @@ int yfs_client::readdir(inum parent, std::list<dirent>& dirents) {
     pos = end + 1;
   }
 }
-

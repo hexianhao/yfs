@@ -2,13 +2,31 @@
 #define yfs_client_h
 
 #include <string>
-//#include "yfs_protocol.h"
+#include "lock_protocol.h"
 #include "extent_client.h"
+#include "lock_client.h"
 #include <vector>
 
+class LockGuard {
+public:
+  LockGuard() = default;
+  
+  LockGuard(lock_client *lc, lock_protocol::lockid_t lid) : m_lc(lc), m_lid(lid) {
+    m_lc->acquire(m_lid);
+  }
+
+  ~LockGuard() {
+    m_lc->release(m_lid);
+  }
+
+private:
+  lock_client *m_lc;
+  lock_protocol::lockid_t m_lid;
+};
 
 class yfs_client {
   extent_client *ec;
+  lock_client *lc;    // lock server
  public:
 
   typedef unsigned long long inum;
@@ -50,6 +68,9 @@ class yfs_client {
   int read(inum, int, int, std::string &);
   int write(inum, int, int, const char*);
   int lookup(inum, const char*, inum &, bool*);
+
+  int mkdir(inum, const char*, inum &);
+  int unlink(inum, const char*);
 
   int setattr(inum, struct stat*);
   int readdir(inum, std::list<dirent>&);
