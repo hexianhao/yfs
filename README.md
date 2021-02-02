@@ -67,7 +67,6 @@ yfs是一个分布式文件系统
 
 
 
-
 **Lab2：使用FUSE完成一个基本的文件服务器**
 
 * 实验难点：
@@ -182,14 +181,12 @@ yfs是一个分布式文件系统
       };
       ```
 
-      
-
    3. extent_server.{cc,h}代码分析
 
       ​	extent_server是文件存储的服务器，对外提供了KV存储的接口，文件和元数据以KV的形式存储：
 
       ```c++
-      struct extent {
+   struct extent {
         // data
         std::string data;
         // attribute
@@ -209,6 +206,50 @@ yfs是一个分布式文件系统
       private:
         std::mutex mtx;   // protect dataMap
         std::map<extent_protocol::extentid_t, extent> dataMap;
+      };
+      ```
+   
+
+
+
+**Lab3：完成MKDIR, UNLINK的功能，以及Locking**
+
+ * 实验难点
+
+   1. 完成mkdir和unlink的语义，与lab2的内容相同；
+   2. 考虑在操作文件系统时，出现的并发问题，比如两个client同时写文件，会出现"last writer wins"的现象
+
+ * 实验要点
+
+   1. 在create、write等“写”操作时，需要利用Lab1的Lock_Server进行加锁，因此可以在yfs_client的结构中加入lock_client，与lock_server进行通信：
+
+      ```c++
+      class yfs_client {
+        extent_client *ec;
+        lock_client *lc;    // lock server
+       public:
+      	xxxx
+      };
+      ```
+
+   2. 在加锁的过程可是使用类似STL的lock_guard方式，即RAII（资源获取即初始化）：
+
+      ```c++
+      class LockGuard {
+      public:
+        LockGuard() = default;
+        
+        LockGuard(lock_client *lc, lock_protocol::lockid_t lid) : m_lc(lc), m_lid(lid) {
+          m_lc->acquire(m_lid);
+        }
+      
+        ~LockGuard() {
+          m_lc->release(m_lid);
+        }
+      
+      private:
+        lock_client *m_lc;
+        lock_protocol::lockid_t m_lid;
       };
       ```
 
