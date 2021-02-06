@@ -253,4 +253,123 @@ yfs是一个分布式文件系统
       };
       ```
 
-      
+
+
+
+**Lab4：实现锁的缓存**
+
+* 实验难点：
+
+  1. 设计锁的缓存机制，即客户端在获取锁时，为了降低网络的负载，将锁缓存在客户端本地
+  2. 客户端对锁的缓存，以及归还服务器的问题
+  3. 不同客户端对锁的竞争
+
+* 实验要点：
+
+  1. 客户端的协议设计：
+  
+     根据实验材料的提示，客户端对于每一个锁，都有如下的状态：
+  
+     ```c++
+     enum lock_state {
+         NONE,
+         FREE,
+         LOCKED,
+         ACQUIRING,
+         RELEASING
+     };
+     ```
+  
+     NONE表示当前的客户端对锁无感知（锁不在客户端本地）；FREE表示当前锁在本地，且没有线程加锁；LOCKED表示锁在本地，且有线程持有；ACCQUIRING表示当前的客户端还未获取到锁，并且在向锁服务器申请锁资源；RELEASING表示当前的客户端将锁归还给锁服务器。
+  
+  2. 服务端的协议设计：
+  
+     ​	下面是在实验过程中的一个错误协议，其思路就是使用了FREE和LOCKED的两个状态，当在调用acquire获取锁时，如果发现锁的状态是LOCKED说明当前的锁被其它客户端占有，需要向该客户端发送revoke的RPC；当该客户端释放锁时，锁服务器向等待的客户端发送retry的RPC。
+  
+  ```c++
+  int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id, 
+                                 int &)
+  {
+    lock_protocol::status ret = lock_protocol::OK;
+    bool revoke = false;
+    std::unique_lock<std::mutex> lck(mtx);
+  
+    auto iter = lockMap.find(lid);
+    if (iter == lockMap.end()) {
+      iter = lockMap.insert(std::make_pair(lid, lock_entry())).first;
+      iter->second.owner = id;
+      iter->second.state = LOCKED;
+    } else {
+      if (iter->second.state == FREE) {
+        iter->second.owner = id;
+        // 从waitSet中删除id
+        iter->second.waitSet.erase(id);
+        // 改变lock的状态
+        iter->second.state = LOCKED;
+      } else {
+        if (iter->second.owner != id) {
+          revoke = true;
+          iter->second.waitSet.insert(id);
+          ret = lock_protocol::RETRY;
+        }
+        
+      }
+    }
+    lck.unlock();
+  
+    if (revoke) {
+      int r;
+      handle(iter->second.owner).safebind()->call(rlock_protocol::revoke, lid, r);
+    }
+  
+    return ret;
+  }
+  
+  int 
+  lock_server_cache::release(lock_protocol::lockid_t lid, std::string id, 
+           int &r)
+  {
+    lock_protocol::status ret = lock_protocol::OK;
+  
+    std::unique_lock<std::mutex> lck(mtx);
+  
+    auto iter = lockMap.find(lid);
+    if (iter == lockMap.end()) {
+      return lock_protocol::IOERR;
+    }
+    if (iter->second.owner != id) {
+      return lock_protocol::IOERR;
+    }
+  // release
+    iter->second.owner = "";
+    iter->second.state = FREE;
+    
+    if (!iter->second.waitSet.empty()) {
+      // send retryRPC
+      std::string retryClient = *(iter->second.waitSet.begin());
+      // unlock before rpc
+      lck.unlock();
+      handle(retryClient).safebind()->call(rlock_protocol::retry, lid, r);
+    }
+  
+    return ret;
+  }
+  ```
+  
+  ​	该方案有个bug会导致deadlock：假设A，B，C三个客户端向服务器申请同一把锁，此时A先来，获得了锁，而B和C后来，分别等待，并且服务器向A发送了revoke。当A完成任务后，将锁归还给服务器，此时服务器将选择B发送retry，而当B得到了锁后，就会将锁缓存在本地，那么C将无法获得锁，除非有新的客户端获取锁，才可能触发服务器向B发送revoke。所以C将一直阻塞。
+  
+  ​	那么一个解决的方法就是将**状态划分的更细**。具体地，服务器端锁的状态可以划分为：
+  
+  ```c++
+  enum lock_state {
+      FREE,
+      LOCKED,
+      // 为了防止出现deadlock，需要以下两个状态
+      LOCKED_AND_WAIT,  // 表示有其它客户端等待锁
+      RETRYING          // 表示服务器提醒客户端重试
+  };
+  ```
+  
+  ​	此处增加了LOCKED_AND_WAIT和RETRYING的字段，为的就是区分锁被某个客户端单独使用，还是有其它的客户端在等待。例如在客户端在获取锁时，如果当前锁的状态是LOCKED或LOCKED_AND_WAIT，那么需要等待，并且服务器要向锁的持有者发送revoke
+  
+  

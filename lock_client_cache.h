@@ -5,6 +5,10 @@
 #define lock_client_cache_h
 
 #include <string>
+#include <unordered_map>
+#include <mutex>
+#include <condition_variable>
+
 #include "lock_protocol.h"
 #include "rpc.h"
 #include "lock_client.h"
@@ -35,6 +39,35 @@ class lock_client_cache : public lock_client {
                                         int &);
   rlock_protocol::status retry_handler(lock_protocol::lockid_t, 
                                        int &);
+
+ private:
+  enum lock_state {
+    NONE,
+    FREE,
+    LOCKED,
+    ACQUIRING,
+    RELEASING
+  };
+
+  struct lock_entry {
+    // 记录server是否调用revokeRPC
+    bool revoked;
+    // 记录server是否调用retryRPC
+    bool retry;
+    // 记录当前锁的状态
+    lock_state state;
+
+    lock_entry() : revoked(false), retry(false), state(NONE) {}
+  };
+
+  // 锁缓存
+  std::unordered_map<lock_protocol::lockid_t, lock_entry> lockCache;
+
+  // 并发控制
+  std::mutex mtx;
+  std::condition_variable waitQueue;
+  std::condition_variable releaseQueue;
+  std::condition_variable retryQueue;
 };
 
 
