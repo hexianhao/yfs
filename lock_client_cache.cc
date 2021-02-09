@@ -125,6 +125,7 @@ lock_client_cache::release(lock_protocol::lockid_t lid)
     iter->second.revoked = false;
     lck.unlock();
 
+    lu->dorelease(lid);
     ret = cl->call(lock_protocol::release, lid, id, r);
     lck.lock();
 

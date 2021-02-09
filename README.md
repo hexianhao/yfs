@@ -371,5 +371,102 @@ yfs是一个分布式文件系统
   ```
   
   ​	此处增加了LOCKED_AND_WAIT和RETRYING的字段，为的就是区分锁被某个客户端单独使用，还是有其它的客户端在等待。例如在客户端在获取锁时，如果当前锁的状态是LOCKED或LOCKED_AND_WAIT，那么需要等待，并且服务器要向锁的持有者发送revoke
-  
-  
+
+
+
+**Lab5：实现文件缓存**
+
+* 实验难点
+
+  1. 为了减少网络的负载，extent_client需要将extent_server的数据进行缓存
+  2. 不同的extent_client需要实现一致性，例如A修改了data，并缓存在A的本地，那么B要访问data时，A对data的修改要对B可见
+
+* 实验要点
+
+  1. 数据缓存需要保存一些状态，比如数据是否更新，如果数据更新了，需要有write-back的机制，保证extent_server能够有最新的数据：
+
+     ```c++
+     enum extent_state {
+         NONE,
+         CACHED,     // 表示缓存未修改
+         UPDATED,    // 缓存已更新
+         REMOVED     // 缓存已删除
+     };
+     ```
+
+  2. 关于extent_client的一致性实现，采用的是向lock_server获取锁，因此extent_id和lock_id采用相同的编号。extent_client的结构如下：
+
+     ```c++
+     class extent_client {
+     public:
+       extent_client(std::string dst);
+     
+       extent_protocol::status get(extent_protocol::extentid_t eid,
+                                     std::string &buf);
+       extent_protocol::status getattr(extent_protocol::extentid_t eid,
+                                       extent_protocol::attr &a);
+       extent_protocol::status put(extent_protocol::extentid_t eid, std::string buf);
+       extent_protocol::status remove(extent_protocol::extentid_t eid);
+       extent_protocol::status flush(extent_protocol::extentid_t eid);
+     
+     private:
+         rpcc *cl;
+         enum extent_state {
+             NONE,
+             CACHED,     // 表示缓存未修改
+             UPDATED,    // 缓存已更新
+             REMOVED     // 缓存已删除
+         };
+     
+         struct extent_entry {
+             std::string data;
+             extent_protocol::attr attr;
+             extent_state state;
+     
+             extent_entry() : state(NONE) {}
+         };
+         
+         std::unordered_map<extent_protocol::extentid_t, extent_entry> extentCache;
+         std::mutex mtx;
+     };
+     ```
+
+     在yfs_client中，需要有extent_client和lock_client_cache两个客户端，lock_client_cache在进行release的过程中，需要判断是否将缓存的数据写回到extent_server上再释放锁：
+
+     ```c++
+     // Classes that inherit lock_release_user can override dorelease so that 
+     // that they will be called when lock_client releases a lock.
+     // You will not need to do anything with this class until Lab 5.
+     class lock_release_user {
+      public:
+       virtual void dorelease(lock_protocol::lockid_t) = 0;
+       virtual ~lock_release_user() {};
+     };
+     
+     class lock_user : public lock_release_user {
+     public:
+       lock_user(extent_client *e) : ec(e) {}
+       // dorelease在将锁释放回服务器时调用
+       void dorelease(lock_protocol::lockid_t lid) {
+         ec->flush(lid);
+       }
+     
+     private:
+       extent_client *ec;
+     };
+     ```
+
+     而在lock_client_cache的类中，保存着lock_release_user类：
+
+     ```c++
+     class lock_client_cache : public lock_client {
+      private:
+       class lock_release_user *lu;
+       int rlock_port;
+       std::string hostname;
+       std::string id;
+       xxxxxx
+     };
+     ```
+
+     
