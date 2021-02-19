@@ -254,24 +254,24 @@ config::heartbeater()
     m = me;
     for (unsigned i = 0; i < cmems.size(); i++) {
       if (m > cmems[i])
-	m = cmems[i];
+	      m = cmems[i];
     }
 
     if (m == me) {
       //if i am the one with smallest id, ping the rest of the nodes
       for (unsigned i = 0; i < cmems.size(); i++) {
-	if (cmems[i] != me) {
-	  if ((h = doheartbeat(cmems[i])) != OK) {
-	    stable = false;
-	    m = cmems[i];
-	    break;
-	  }
-	}
+        if (cmems[i] != me) {
+          if ((h = doheartbeat(cmems[i])) != OK) {
+            stable = false;
+            m = cmems[i];
+            break;
+          }
+        }
       }
     } else {
       //the rest of the nodes ping the one with smallest id
-	if ((h = doheartbeat(m)) != OK) 
-	    stable = false;
+      if ((h = doheartbeat(m)) != OK) 
+          stable = false;
     }
 
     if (!stable && vid == myvid) {
@@ -317,7 +317,7 @@ config::doheartbeat(std::string m)
   VERIFY(pthread_mutex_lock(&cfg_mutex)==0);
   if (ret != paxos_protocol::OK) {
     if (ret == rpc_const::atmostonce_failure || 
-	ret == rpc_const::oldsrv_failure) {
+	      ret == rpc_const::oldsrv_failure) {
       mgr.delete_handle(m);
     } else {
       tprintf("doheartbeat: problem with %s (%d) my vid %d his vid %d\n", 

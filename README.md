@@ -255,7 +255,6 @@ yfs是一个分布式文件系统
 
 
 
-
 **Lab4：实现锁的缓存**
 
 * 实验难点：
@@ -469,4 +468,80 @@ yfs是一个分布式文件系统
      };
      ```
 
+
+
+
+**Lab6：实现Paxos协议**
+
+* 实验难点：
+
+  1. 之前的实验中并未考虑lock_server单点故障的问题，在Lab6中将实现Paxos一致性算法解决该问题
+  2. 理解RSM的思路——机器初始状态相同，那么执行相同的操作系列后状态也是相同的。由于网络乱序等原因，无法保证所有备份机器收到的操作请求序列都是相同的，所以采用一机器为master，master从客户端接受请求,决定请求次序，然后发送给各个备份机器，然后以相同的次序在所有备份(replicas)机器上执行，master等待所有备份机器返回，然后master返回给客户端，当master失败，任何一个备份(replicas)可以接管工作，因为他们都有相同的状态。
+
+* 实验要点：
+
+  1. 理解config.{h,cc}、rsm.{h,cc}和paxos.{h,cc}模块的关系：rsm是复制状态机，属于最上层的模块，而rsm的模块下有config，config表示对不同server节点的管理，主要是通过心跳包的发送和接收管理宕机节点。而config模块下有paxos，paxos实现状态的一致性，具体的结构如下：
+
+     ```c++
+     class rsm : public config_view_change {
+      protected:
+       ......
+       config *cfg;
+       ......
+     };
      
+     class config : public paxos_change {
+      private:
+       ......
+       acceptor *acc;
+       proposer *pro;
+       ......
+     };
+     ```
+
+     
+
+  2. 完成paxos.{cc,h}的代码
+
+     paxos有两个角色（proposer和acceptor），需要分别实现两者的逻辑。paxos的伪代码如下所示：
+
+     ```
+     proposer run(instance, v):
+      choose n, unique and higher than any n seen so far
+      send prepare(instance, n) to all servers including self
+      if oldinstance(instance, instance_value) from any node:
+        commit to the instance_value locally
+      else if prepare_ok(n_a, v_a) from majority:
+        v' = v_a with highest n_a; choose own v otherwise
+        send accept(instance, n, v') to all
+        if accept_ok(n) from majority:
+          send decided(instance, v') to all
+     
+     acceptor state:
+      must persist across reboots
+      n_h (highest prepare seen)
+      instance_h, (highest instance accepted)
+      n_a, v_a (highest accept seen)
+     
+     acceptor prepare(instance, n) handler:
+      if instance <= instance_h
+        reply oldinstance(instance, instance_value)
+      else if n > n_h
+        n_h = n
+        reply prepare_ok(n_a, v_a)
+      else
+        reply prepare_reject
+     
+     acceptor accept(instance, n, v) handler:
+      if n >= n_h
+        n_a = n
+        v_a = v
+        reply accept_ok(n)
+      else
+        reply accept_reject
+     
+     acceptor decide(instance, v) handler:
+      paxos_commit(instance, v)
+     ```
+
+     在伪码里，“instance”表示一次paxos达成一致的实例，因为在原始论文中，paxos只能对一个value达成一致，如果有多个value，则需要用不同的paxos实例。
